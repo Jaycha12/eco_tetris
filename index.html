@@ -1,0 +1,764 @@
+import tkinter as tk
+import random
+import os
+
+root = tk.Tk()
+root.title("나의 테트리스")
+root.resizable(False, False)
+
+WIDTH = 10
+HEIGHT = 20
+SIZE = 30
+
+canvas = tk.Canvas(
+    root,
+    width=WIDTH * SIZE + 180,
+    height=HEIGHT * SIZE,
+    bg="black"
+)
+canvas.pack()
+
+# =========================
+# 게임 정보
+# =========================
+
+score = 0
+lines = 0
+level = 1
+game_over = False
+
+# =========================
+# 최고기록 파일
+# =========================
+
+BEST_FILE = "best_score.txt"
+
+
+def load_best_score():
+    try:
+        with open(BEST_FILE, "r") as file:
+            return int(file.read())
+    except:
+        return 0
+
+
+def save_best_score():
+    try:
+        with open(BEST_FILE, "w") as file:
+            file.write(str(best_score))
+    except:
+        pass
+
+
+best_score = load_best_score()
+
+# =========================
+# 게임판
+# =========================
+
+board = [
+    [None for _ in range(WIDTH)]
+    for _ in range(HEIGHT)
+]
+
+# =========================
+# HOLD
+# =========================
+
+hold_piece = None
+hold_color = None
+hold_used = False
+
+# =========================
+# 테트리스 블록
+# =========================
+
+SHAPES = [
+    ([[1, 1, 1, 1]], "cyan"),
+
+    ([[1, 1],
+      [1, 1]], "yellow"),
+
+    ([[0, 1, 0],
+      [1, 1, 1]], "purple"),
+
+    ([[1, 0],
+      [1, 0],
+      [1, 1]], "orange"),
+
+    ([[0, 1],
+      [0, 1],
+      [1, 1]], "blue"),
+
+    ([[0, 1, 1],
+      [1, 1, 0]], "green"),
+
+    ([[1, 1, 0],
+      [0, 1, 1]], "red")
+]
+
+# =========================
+# NEXT 블록
+# =========================
+
+next_piece, next_color = random.choice(SHAPES)
+
+
+# =========================
+# 새로운 블록
+# =========================
+
+def new_piece():
+
+    global piece
+    global piece_color
+    global next_piece
+    global next_color
+    global x
+    global y
+    global hold_used
+
+    piece = next_piece
+    piece_color = next_color
+
+    next_piece, next_color = random.choice(SHAPES)
+
+    x = WIDTH // 2 - len(piece[0]) // 2
+    y = 0
+
+    hold_used = False
+
+
+new_piece()
+
+
+# =========================
+# 화면 그리기
+# =========================
+
+def draw():
+
+    canvas.delete("all")
+
+    # 게임판
+    for row in range(HEIGHT):
+        for col in range(WIDTH):
+
+            canvas.create_rectangle(
+                col * SIZE,
+                row * SIZE,
+                (col + 1) * SIZE,
+                (row + 1) * SIZE,
+                outline="#333333"
+            )
+
+            if board[row][col] is not None:
+
+                canvas.create_rectangle(
+                    col * SIZE,
+                    row * SIZE,
+                    (col + 1) * SIZE,
+                    (row + 1) * SIZE,
+                    fill=board[row][col],
+                    outline="black"
+                )
+
+    # 현재 블록
+    for row in range(len(piece)):
+        for col in range(len(piece[row])):
+
+            if piece[row][col]:
+
+                canvas.create_rectangle(
+                    (x + col) * SIZE,
+                    (y + row) * SIZE,
+                    (x + col + 1) * SIZE,
+                    (y + row + 1) * SIZE,
+                    fill=piece_color,
+                    outline="black"
+                )
+
+    # =========================
+    # 오른쪽 정보
+    # =========================
+
+    info_x = WIDTH * SIZE + 20
+
+    # SCORE
+    canvas.create_text(
+        info_x,
+        25,
+        anchor="nw",
+        text="SCORE",
+        fill="white",
+        font=("Arial", 15, "bold")
+    )
+
+    canvas.create_text(
+        info_x,
+        50,
+        anchor="nw",
+        text=str(score),
+        fill="white",
+        font=("Arial", 19)
+    )
+
+    # BEST
+    canvas.create_text(
+        info_x,
+        90,
+        anchor="nw",
+        text="BEST",
+        fill="gold",
+        font=("Arial", 15, "bold")
+    )
+
+    canvas.create_text(
+        info_x,
+        115,
+        anchor="nw",
+        text=str(best_score),
+        fill="gold",
+        font=("Arial", 19, "bold")
+    )
+
+    # LEVEL
+    canvas.create_text(
+        info_x,
+        155,
+        anchor="nw",
+        text="LEVEL",
+        fill="white",
+        font=("Arial", 15, "bold")
+    )
+
+    canvas.create_text(
+        info_x,
+        180,
+        anchor="nw",
+        text=str(level),
+        fill="white",
+        font=("Arial", 19)
+    )
+
+    # LINES
+    canvas.create_text(
+        info_x,
+        220,
+        anchor="nw",
+        text="LINES",
+        fill="white",
+        font=("Arial", 15, "bold")
+    )
+
+    canvas.create_text(
+        info_x,
+        245,
+        anchor="nw",
+        text=str(lines),
+        fill="white",
+        font=("Arial", 19)
+    )
+
+    # =========================
+    # HOLD
+    # =========================
+
+    canvas.create_text(
+        info_x,
+        290,
+        anchor="nw",
+        text="HOLD",
+        fill="white",
+        font=("Arial", 15, "bold")
+    )
+
+    if hold_piece is not None:
+
+        hold_x = WIDTH * SIZE + 30
+        hold_y = 330
+
+        for row in range(len(hold_piece)):
+            for col in range(len(hold_piece[row])):
+
+                if hold_piece[row][col]:
+
+                    canvas.create_rectangle(
+                        hold_x + col * SIZE,
+                        hold_y + row * SIZE,
+                        hold_x + (col + 1) * SIZE,
+                        hold_y + (row + 1) * SIZE,
+                        fill=hold_color,
+                        outline="black"
+                    )
+
+    # =========================
+    # NEXT
+    # =========================
+
+    canvas.create_text(
+        info_x,
+        430,
+        anchor="nw",
+        text="NEXT",
+        fill="white",
+        font=("Arial", 15, "bold")
+    )
+
+    next_x = WIDTH * SIZE + 30
+    next_y = 470
+
+    for row in range(len(next_piece)):
+        for col in range(len(next_piece[row])):
+
+            if next_piece[row][col]:
+
+                canvas.create_rectangle(
+                    next_x + col * SIZE,
+                    next_y + row * SIZE,
+                    next_x + (col + 1) * SIZE,
+                    next_y + (row + 1) * SIZE,
+                    fill=next_color,
+                    outline="black"
+                )
+
+    # =========================
+    # 조작법
+    # =========================
+
+    canvas.create_text(
+        info_x,
+        570,
+        anchor="nw",
+        text="← → : 이동\n"
+             "↓ : 빠르게\n"
+             "↑ : 회전\n"
+             "SPACE : 즉시 낙하\n"
+             "C : HOLD\n"
+             "R : 재시작",
+        fill="white",
+        font=("Arial", 9)
+    )
+
+    # =========================
+    # GAME OVER
+    # =========================
+
+    if game_over:
+
+        canvas.create_rectangle(
+            30,
+            240,
+            270,
+            380,
+            fill="black",
+            outline="white"
+        )
+
+        canvas.create_text(
+            WIDTH * SIZE // 2,
+            275,
+            text="GAME OVER",
+            fill="red",
+            font=("Arial", 24, "bold")
+        )
+
+        canvas.create_text(
+            WIDTH * SIZE // 2,
+            315,
+            text="SCORE : " + str(score),
+            fill="white",
+            font=("Arial", 14, "bold")
+        )
+
+        canvas.create_text(
+            WIDTH * SIZE // 2,
+            345,
+            text="BEST : " + str(best_score),
+            fill="gold",
+            font=("Arial", 14, "bold")
+        )
+
+        canvas.create_text(
+            WIDTH * SIZE // 2,
+            370,
+            text="R 키를 눌러 재시작",
+            fill="white",
+            font=("Arial", 11)
+        )
+
+
+# =========================
+# 이동 가능 여부
+# =========================
+
+def can_move(nx, ny, shape=None):
+
+    if shape is None:
+        shape = piece
+
+    for row in range(len(shape)):
+        for col in range(len(shape[row])):
+
+            if shape[row][col]:
+
+                bx = nx + col
+                by = ny + row
+
+                if bx < 0 or bx >= WIDTH:
+                    return False
+
+                if by >= HEIGHT:
+                    return False
+
+                if by >= 0 and board[by][bx] is not None:
+                    return False
+
+    return True
+
+
+# =========================
+# 왼쪽 이동
+# =========================
+
+def move_left(event=None):
+
+    global x
+
+    if game_over:
+        return
+
+    if can_move(x - 1, y):
+        x -= 1
+
+    draw()
+
+
+# =========================
+# 오른쪽 이동
+# =========================
+
+def move_right(event=None):
+
+    global x
+
+    if game_over:
+        return
+
+    if can_move(x + 1, y):
+        x += 1
+
+    draw()
+
+
+# =========================
+# 아래 이동
+# =========================
+
+def move_down(event=None):
+
+    global y
+
+    if game_over:
+        return
+
+    if can_move(x, y + 1):
+
+        y += 1
+
+    else:
+
+        lock_piece()
+
+    draw()
+
+
+# =========================
+# 즉시 낙하
+# =========================
+
+def hard_drop(event=None):
+
+    global y
+
+    if game_over:
+        return
+
+    while can_move(x, y + 1):
+        y += 1
+
+    lock_piece()
+
+    draw()
+
+
+# =========================
+# HOLD
+# =========================
+
+def hold(event=None):
+
+    global piece
+    global piece_color
+    global hold_piece
+    global hold_color
+    global x
+    global y
+    global hold_used
+    global next_piece
+    global next_color
+
+    if game_over:
+        return
+
+    if hold_used:
+        return
+
+    # HOLD가 비어 있는 경우
+    if hold_piece is None:
+
+        hold_piece = piece
+        hold_color = piece_color
+
+        piece = next_piece
+        piece_color = next_color
+
+        next_piece, next_color = random.choice(SHAPES)
+
+    # HOLD와 현재 블록 교환
+    else:
+
+        temp_piece = piece
+        temp_color = piece_color
+
+        piece = hold_piece
+        piece_color = hold_color
+
+        hold_piece = temp_piece
+        hold_color = temp_color
+
+    x = WIDTH // 2 - len(piece[0]) // 2
+    y = 0
+
+    hold_used = True
+
+    draw()
+
+
+# =========================
+# 블록 고정
+# =========================
+
+def lock_piece():
+
+    global game_over
+
+    for row in range(len(piece)):
+        for col in range(len(piece[row])):
+
+            if piece[row][col]:
+
+                board_y = y + row
+                board_x = x + col
+
+                if board_y >= 0:
+
+                    board[board_y][board_x] = piece_color
+
+    clear_lines()
+
+    new_piece()
+
+    if not can_move(x, y):
+
+        game_over = True
+
+
+# =========================
+# 줄 삭제
+# =========================
+
+def clear_lines():
+
+    global board
+    global score
+    global lines
+    global level
+    global best_score
+
+    new_board = []
+    deleted = 0
+
+    for row in board:
+
+        if None not in row:
+
+            deleted += 1
+
+        else:
+
+            new_board.append(row)
+
+    # 점수
+    if deleted == 1:
+
+        score += 100
+
+    elif deleted == 2:
+
+        score += 300
+
+    elif deleted == 3:
+
+        score += 500
+
+    elif deleted == 4:
+
+        score += 800
+
+    # 줄 수
+    lines += deleted
+
+    # 레벨
+    level = lines // 10 + 1
+
+    # 최고기록 확인
+    if score > best_score:
+
+        best_score = score
+
+        # 최고기록을 파일에 저장
+        save_best_score()
+
+    # 빈 줄 추가
+    while len(new_board) < HEIGHT:
+
+        new_board.insert(
+            0,
+            [None for _ in range(WIDTH)]
+        )
+
+    board = new_board
+
+
+# =========================
+# 회전
+# =========================
+
+def rotate(event=None):
+
+    global piece
+
+    if game_over:
+        return
+
+    # O 블록은 회전하지 않음
+    if len(piece) == 2 and len(piece[0]) == 2:
+
+        return
+
+    rotated = []
+
+    for col in range(len(piece[0])):
+
+        new_row = []
+
+        for row in range(len(piece) - 1, -1, -1):
+
+            new_row.append(piece[row][col])
+
+        rotated.append(new_row)
+
+    if can_move(x, y, rotated):
+
+        piece = rotated
+
+    draw()
+
+
+# =========================
+# 재시작
+# =========================
+
+def restart(event=None):
+
+    global board
+    global score
+    global lines
+    global level
+    global game_over
+    global hold_piece
+    global hold_color
+    global hold_used
+    global next_piece
+    global next_color
+
+    board = [
+        [None for _ in range(WIDTH)]
+        for _ in range(HEIGHT)
+    ]
+
+    score = 0
+    lines = 0
+    level = 1
+    game_over = False
+
+    # HOLD 초기화
+    hold_piece = None
+    hold_color = None
+    hold_used = False
+
+    # NEXT 초기화
+    next_piece, next_color = random.choice(SHAPES)
+
+    # 새 블록
+    new_piece()
+
+    draw()
+
+
+# =========================
+# 자동 낙하
+# =========================
+
+def auto_down():
+
+    if not game_over:
+
+        move_down()
+
+    speed = max(
+        100,
+        500 - (level - 1) * 40
+    )
+
+    root.after(speed, auto_down)
+
+
+# =========================
+# 키 연결
+# =========================
+
+root.bind("<Left>", move_left)
+root.bind("<Right>", move_right)
+root.bind("<Down>", move_down)
+root.bind("<Up>", rotate)
+
+root.bind("<space>", hard_drop)
+
+root.bind("<c>", hold)
+root.bind("<C>", hold)
+
+root.bind("<r>", restart)
+root.bind("<R>", restart)
+
+
+# =========================
+# 게임 시작
+# =========================
+
+restart()
+
+root.after(500, auto_down)
+
+root.mainloop()
