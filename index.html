@@ -10,7 +10,6 @@ body{
   margin:0; background:black; color:white;
   display:flex; justify-content:center; align-items:center; height:100vh;
   font-family:sans-serif; 
-  /* 모바일/태블릿 기본 제스처 원천 차단 */
   touch-action: none;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
@@ -18,21 +17,22 @@ body{
   overflow: hidden;
 }
 #container{position:relative;display:flex;flex-direction:column;align-items:center;}
-#game{width:420px;height:840px;border:2px solid #333; touch-action: none;}
+#game{width:420px;height:840px;border:2px solid #555; touch-action: none;}
 #info{position:absolute;right:-220px;top:0;width:200px;display:flex;flex-direction:column;gap:10px;}
-.panel{border:1px solid #555;padding:10px;text-align:center;}
-canvas.mini{background:black;margin-top:5px;}
+.panel{border:1px solid #555;padding:10px;text-align:center;background:#111;font-weight:bold;}
+canvas.mini{background:black;margin-top:5px;display:block;margin-left:auto;margin-right:auto;}
 #controls{margin-top:15px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:420px;}
 button{
-  padding:14px; font-size:16px; 
-  /* 버튼 터치 시 확대 및 스크롤 방지, 딜레이 제거 */
+  padding:14px; font-size:16px; font-weight:bold;
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
   cursor: pointer;
+  background:#222; color:white; border:1px solid #777; border-radius:4px;
 }
+button:active{background:#444;}
 #gameOver{position:absolute;top:0;left:0;width:100%;height:100%;display:none;
-justify-content:center;align-items:center;flex-direction:column;background:rgba(0,0,0,0.85);}
+justify-content:center;align-items:center;flex-direction:column;background:rgba(0,0,0,0.88);}
 </style>
 </head>
 
@@ -67,9 +67,9 @@ justify-content:center;align-items:center;flex-direction:column;background:rgba(
 </div>
 
 <div id="gameOver">
-  <div style="font-size:32px;">GAME OVER</div>
-  <div id="final"></div>
-  <button id="btnRestart">RESTART</button>
+  <div style="font-size:32px; margin-bottom:15px; color:#ff4444;">GAME OVER</div>
+  <div id="final" style="margin-bottom:20px; font-size:18px;"></div>
+  <button id="btnRestart" style="padding:12px 24px;">RESTART</button>
 </div>
 
 </div>
@@ -78,21 +78,26 @@ justify-content:center;align-items:center;flex-direction:column;background:rgba(
 /* 확대 및 제스처 방지 보완 */
 document.addEventListener("gesturestart", e => e.preventDefault());
 
-/* 사운드 */
+/* 사운드 (AudioContext) */
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-document.body.addEventListener("click", () => {
-  if (audioCtx.state === "suspended") audioCtx.resume();
-});
+function triggerAudioContext(){
+  if(audioCtx.state === "suspended") audioCtx.resume();
+}
+document.body.addEventListener("pointerdown", triggerAudioContext, {once: true});
+
 function beep(f, t=0.05){
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  o.connect(g); g.connect(audioCtx.destination);
-  o.frequency.value = f;
-  g.gain.value = 0.2;
-  o.start(); o.stop(audioCtx.currentTime + t);
+  try {
+    if(audioCtx.state !== "running") return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.frequency.value = f;
+    g.gain.value = 0.15;
+    o.start(); o.stop(audioCtx.currentTime + t);
+  } catch(e) {}
 }
 
-/* 기본 */
+/* 기본 환경 설정 */
 const ROW=20, COL=10, SIZE=30;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -118,7 +123,7 @@ const SHAPES=[
 {type:'S', shape:[[0,1,1],[1,1,0]], color:"lime"}
 ];
 
-/* 7-bag */
+/* 7-bag 랜덤 시스템 */
 let bag=[];
 function refillBag(){
   bag = SHAPES.slice();
@@ -132,6 +137,7 @@ function getNext(){
   return bag.pop();
 }
 
+/* 깊은 복사 (참조 버그 제거) */
 function clonePiece(p){
   return {
     type: p.type,
@@ -150,6 +156,11 @@ function reset(){
   board = Array.from({length: ROW}, () => Array(COL).fill(null));
   score = 0; combo = 0; b2b = false;
   gameOver = false;
+  waitingClear = false;
+  effectTimer = 0;
+  holdPiece = null;
+  holdUsed = false;
+  refillBag();
   nextPiece = newPiece();
   spawn();
   document.getElementById("gameOver").style.display = "none";
@@ -162,6 +173,7 @@ function spawn(){
 
   if(!canMove(0, 0)){
     gameOver = true;
+    beep(150, 0.3);
     if(score > best){
       best = score;
       localStorage.setItem("best", best);
@@ -171,7 +183,7 @@ function spawn(){
   holdUsed = false;
 }
 
-/* MOVE */
+/* MOVE & 충돌 판정 */
 function canMove(dx, dy, s = piece.shape){
   for(let r = 0; r < s.length; r++){
     for(let c = 0; c < s[r].length; c++){
@@ -179,7 +191,7 @@ function canMove(dx, dy, s = piece.shape){
         let nx = piece.x + c + dx;
         let ny = piece.y + r + dy;
         if(nx < 0 || nx >= COL || ny >= ROW) return false;
-        if(board[ny] && board[ny][nx]) return false;
+        if(ny >= 0 && board[ny] && board[ny][nx]) return false;
       }
     }
   }
@@ -193,7 +205,7 @@ function getGhostY(){
   return y;
 }
 
-/* SRS 킥 */
+/* SRS 킥 데이터 */
 const kicks = {
   normal:[
     [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
@@ -205,9 +217,10 @@ const kicks = {
   ]
 };
 
-/* 회전 */
+/* 회전 시스템 (SRS 벽킥 포함) */
 let lastRotate = false;
 function rotate(){
+  if(gameOver || waitingClear) return;
   let old = piece.shape;
   let newShape = old[0].map((_, i) => old.map(r => r[i]).reverse());
 
@@ -220,6 +233,7 @@ function rotate(){
         piece.x += dx;
         piece.y += dy;
         lastRotate = true;
+        beep(440);
         return;
       }
     }
@@ -227,7 +241,7 @@ function rotate(){
   lastRotate = false;
 }
 
-/* T-Spin */
+/* T-SPIN 판정 (코너 3개 + 회전 기반) */
 function isTSpin(){
   if(piece.type !== 'T' || !lastRotate) return false;
 
@@ -241,31 +255,36 @@ function isTSpin(){
 
   let count = 0;
   corners.forEach(([x, y]) => {
-    if(x < 0 || x >= COL || y >= ROW || (board[y] && board[y][x])) count++;
+    if(x < 0 || x >= COL || y >= ROW || (y >= 0 && board[y] && board[y][x])) count++;
   });
 
   return count >= 3;
 }
 
-/* LINE */
+/* LINE CLEAR */
 function checkLines(){
   clearRows = [];
   for(let r = 0; r < ROW; r++){
-    if(board[r].every(v => v)) clearRows.push(r);
+    if(board[r].every(v => v !== null)) clearRows.push(r);
   }
   if(clearRows.length){
-    effectTimer = 10;
+    effectTimer = 12;
     waitingClear = true;
-    beep(700);
+    beep(600, 0.1);
   }
   return clearRows.length;
 }
 
-/* MERGE */
+/* MERGE & 점수 시스템 */
 function merge(){
   for(let r = 0; r < piece.shape.length; r++){
     for(let c = 0; c < piece.shape[r].length; c++){
       if(piece.shape[r][c]){
+        if(piece.y + r < 0){
+          gameOver = true;
+          showGameOver();
+          return;
+        }
         board[piece.y + r][piece.x + c] = piece.color;
       }
     }
@@ -276,31 +295,37 @@ function merge(){
 
   if(cleared){
     combo++;
-    let base = [0, 100, 300, 500, 800][cleared];
+    let base = [0, 100, 300, 500, 800][cleared] || 800;
 
     if(tspin){
       base *= 2;
-      if(b2b) base *= 1.5;
+      if(b2b) base = Math.floor(base * 1.5);
       b2b = true;
     } else {
       if(cleared === 4){
-        if(b2b) base *= 1.5;
+        if(b2b) base = Math.floor(base * 1.5);
         b2b = true;
-      } else b2b = false;
+      } else {
+        b2b = false;
+      }
     }
 
-    score += base + combo * 50;
+    score += base + (combo - 1) * 50;
   } else {
     combo = 0;
     b2b = false;
   }
 
   lastRotate = false;
+
+  if(!waitingClear){
+    spawn();
+  }
 }
 
 /* APPLY CLEAR */
 function applyClear(){
-  clearRows.sort((a, b) => b - a);
+  clearRows.sort((a, b) => a - b);
   clearRows.forEach(r => {
     board.splice(r, 1);
     board.unshift(Array(COL).fill(null));
@@ -309,12 +334,13 @@ function applyClear(){
   spawn();
 }
 
-/* DRAW */
+/* DRAW (선명한 격자 및 시각 효과) */
 function draw(){
   ctx.clearRect(0, 0, 300, 600);
 
-  // grid
-  ctx.strokeStyle = "#222";
+  // 선명한 격자 표시 (#3A3A3A)
+  ctx.strokeStyle = "#3A3A3A";
+  ctx.lineWidth = 1;
   for(let x = 0; x <= COL; x++){
     ctx.beginPath(); ctx.moveTo(x * SIZE, 0); ctx.lineTo(x * SIZE, 600); ctx.stroke();
   }
@@ -322,47 +348,54 @@ function draw(){
     ctx.beginPath(); ctx.moveTo(0, y * SIZE); ctx.lineTo(300, y * SIZE); ctx.stroke();
   }
 
-  // ghost
-  let gy = getGhostY();
-  ctx.globalAlpha = 0.3;
-  ctx.fillStyle = piece.color;
-  for(let r = 0; r < piece.shape.length; r++){
-    for(let c = 0; c < piece.shape[r].length; c++){
-      if(piece.shape[r][c]){
-        ctx.fillRect((piece.x + c) * SIZE, (gy + r) * SIZE, SIZE, SIZE);
-      }
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  // board
+  // Board 그리기
   for(let r = 0; r < ROW; r++){
     for(let c = 0; c < COL; c++){
       if(board[r][c]){
         ctx.fillStyle = board[r][c];
         ctx.fillRect(c * SIZE, r * SIZE, SIZE, SIZE);
+        ctx.strokeStyle = "#111";
+        ctx.strokeRect(c * SIZE, r * SIZE, SIZE, SIZE);
       }
     }
   }
 
-  // effect
-  if(effectTimer > 0 && effectTimer % 2 === 0){
+  // 라인 삭제 시 흰색 깜빡 효과
+  if(effectTimer > 0 && Math.floor(effectTimer / 2) % 2 === 0){
     ctx.fillStyle = "white";
     clearRows.forEach(r => {
       ctx.fillRect(0, r * SIZE, COL * SIZE, SIZE);
     });
   }
 
-  // piece
-  ctx.fillStyle = piece.color;
-  for(let r = 0; r < piece.shape.length; r++){
-    for(let c = 0; c < piece.shape[r].length; c++){
-      if(piece.shape[r][c]){
-        ctx.fillRect((piece.x + c) * SIZE, (piece.y + r) * SIZE, SIZE, SIZE);
+  // 고스트(Ghost) 반투명 표시
+  if(!waitingClear && !gameOver){
+    let gy = getGhostY();
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = piece.color;
+    for(let r = 0; r < piece.shape.length; r++){
+      for(let c = 0; c < piece.shape[r].length; c++){
+        if(piece.shape[r][c]){
+          ctx.fillRect((piece.x + c) * SIZE, (gy + r) * SIZE, SIZE, SIZE);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // 현재 조작 중인 피스
+    ctx.fillStyle = piece.color;
+    for(let r = 0; r < piece.shape.length; r++){
+      for(let c = 0; c < piece.shape[r].length; c++){
+        if(piece.shape[r][c]){
+          ctx.fillRect((piece.x + c) * SIZE, (piece.y + r) * SIZE, SIZE, SIZE);
+          ctx.strokeStyle = "#000";
+          ctx.strokeRect((piece.x + c) * SIZE, (piece.y + r) * SIZE, SIZE, SIZE);
+        }
       }
     }
   }
 
+  // UI 텍스트 갱신
   document.getElementById("score").innerText = score;
   document.getElementById("best").innerText = "BEST " + best;
   document.getElementById("combo").innerText = "COMBO " + combo;
@@ -371,38 +404,66 @@ function draw(){
   drawMini(holdCtx, holdPiece);
 }
 
-function drawMini(ctx, p){
-  ctx.clearRect(0, 0, 80, 80);
+/* 넥스트/홀드 미니 캔버스 렌더링 수정 (정중앙 정렬 보장) */
+function drawMini(targetCtx, p){
+  targetCtx.clearRect(0, 0, 80, 80);
   if(!p) return;
-  for(let r = 0; r < p.shape.length; r++){
-    for(let c = 0; c < p.shape[r].length; c++){
+  
+  let size = 16;
+  let rows = p.shape.length;
+  let cols = p.shape[0].length;
+  
+  let offsetX = (80 - cols * size) / 2;
+  let offsetY = (80 - rows * size) / 2;
+
+  targetCtx.fillStyle = p.color;
+  for(let r = 0; r < rows; r++){
+    for(let c = 0; c < cols; c++){
       if(p.shape[r][c]){
-        ctx.fillStyle = p.color;
-        ctx.fillRect(c * 18 + 10, r * 18 + 10, 16, 16);
+        targetCtx.fillRect(offsetX + c * size, offsetY + r * size, size - 1, size - 1);
       }
     }
   }
 }
 
-/* UI */
+/* UI / GAME OVER */
 function showGameOver(){
   document.getElementById("gameOver").style.display = "flex";
-  document.getElementById("final").innerText = "Score: " + score + " / Best: "+best;
+  document.getElementById("final").innerText = "Score: " + score + " / Best: " + best;
 }
 
-/* CONTROL */
-function moveLeft(){ if(!gameOver && canMove(-1, 0)) piece.x--; }
-function moveRight(){ if(!gameOver && canMove(1, 0)) piece.x++; }
-function moveDown(){ if(gameOver || waitingClear) return; if(canMove(0, 1)) piece.y++; else merge(); }
+/* CONTROLS (effect 중 입력 차단 적용) */
+function moveLeft(){ 
+  if(gameOver || waitingClear) return; 
+  if(canMove(-1, 0)){ piece.x--; beep(300); } 
+}
+function moveRight(){ 
+  if(gameOver || waitingClear) return; 
+  if(canMove(1, 0)){ piece.x++; beep(300); } 
+}
+function moveDown(){ 
+  if(gameOver || waitingClear) return; 
+  if(canMove(0, 1)){ 
+    piece.y++; 
+    score += 1; // 소프트드롭 점수
+  } else { 
+    merge(); 
+  } 
+}
 function hardDrop(){
   if(gameOver || waitingClear) return;
   let d = 0;
-  while(canMove(0, 1)){ piece.y++; d++; }
-  score += d * 2;
+  while(canMove(0, 1)){ 
+    piece.y++; 
+    d++; 
+  }
+  score += d * 2; // 하드드롭 거리 비례 점수
+  beep(500, 0.08);
   merge();
 }
 function hold(){
-  if(gameOver || holdUsed) return;
+  if(gameOver || waitingClear || holdUsed) return;
+  beep(350);
 
   if(!holdPiece){
     holdPiece = clonePiece(piece);
@@ -410,16 +471,16 @@ function hold(){
   } else {
     let temp = clonePiece(piece);
     piece = clonePiece(holdPiece);
-    holdPiece = temp;
+    holdPiece = clonePiece(temp);
   }
   holdUsed = true;
 }
 
-/* 터치 버튼 이벤트 연결 (딜레이 및 연타 시 확대 문제 해결) */
+/* 터치 버튼 바인딩 (모바일/태블릿 최적화) */
 function bindTouch(id, action){
   const el = document.getElementById(id);
   el.addEventListener("pointerdown", (e) => {
-    e.preventDefault(); // 기본 터치 동작(확대 등) 방지
+    e.preventDefault();
     action();
   });
 }
@@ -433,7 +494,7 @@ bindTouch("btnHold", hold);
 bindTouch("btnReset", reset);
 bindTouch("btnRestart", reset);
 
-/* LOOP (점점 빨라지는 속도 시스템 적용) */
+/* GAME LOOP (점점 빨라지는 난이도 시스템) */
 let last = 0, t = 0;
 function loop(time = 0){
   if(!gameOver){
@@ -441,13 +502,18 @@ function loop(time = 0){
       effectTimer--;
       if(effectTimer <= 0) applyClear();
     } else {
-      let d = time - last; last = time; t += d;
+      let d = time - last; 
+      last = time; 
+      t += d;
       
-      // 점수에 따라 떨어지는 속도가 점진적으로 빨라짐 (최소 150ms까지 단축)
-      let dropInterval = Math.max(150, 500 - Math.floor(score / 1000) * 35);
+      let dropInterval = Math.max(120, 500 - Math.floor(score / 800) * 35);
 
       if(t > dropInterval){ 
-        moveDown(); 
+        if(canMove(0, 1)){
+          piece.y++;
+        } else {
+          merge();
+        }
         t = 0; 
       }
     }
