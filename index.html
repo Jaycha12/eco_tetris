@@ -372,7 +372,7 @@ function draw(){
   }
 
   // 고스트 표시
-  if(!waitingClear && !gameOver){
+  if(!waitingClear && !gameOver && piece){
     let gy = getGhostY();
     ctx.globalAlpha = 0.3;
     ctx.fillStyle = piece.color;
@@ -435,15 +435,15 @@ function showGameOver(){
 
 /* CONTROLS */
 function moveLeft(){ 
-  if(gameOver || waitingClear) return; 
+  if(gameOver || waitingClear || !piece) return; 
   if(canMove(-1, 0, piece.shape)){ piece.x--; beep(300); } 
 }
 function moveRight(){ 
-  if(gameOver || waitingClear) return; 
+  if(gameOver || waitingClear || !piece) return; 
   if(canMove(1, 0, piece.shape)){ piece.x++; beep(300); } 
 }
 function moveDown(){ 
-  if(gameOver || waitingClear) return; 
+  if(gameOver || waitingClear || !piece) return; 
   if(canMove(0, 1, piece.shape)){ 
     piece.y++; 
     score += 1; 
@@ -452,7 +452,7 @@ function moveDown(){
   } 
 }
 function hardDrop(){
-  if(gameOver || waitingClear) return;
+  if(gameOver || waitingClear || !piece) return;
   let d = 0;
   while(canMove(0, 1, piece.shape)){ 
     piece.y++; 
@@ -463,7 +463,7 @@ function hardDrop(){
   merge();
 }
 function hold(){
-  if(gameOver || waitingClear || holdUsed) return;
+  if(gameOver || waitingClear || holdUsed || !piece) return;
   beep(350);
 
   if(!holdPiece){
@@ -497,9 +497,11 @@ bindTouch("btnHold", hold);
 bindTouch("btnReset", reset);
 bindTouch("btnRestart", reset);
 
-/* GAME LOOP */
+/* GAME LOOP (last 초기화 버그 방지 반영) */
 let last = 0, t = 0;
 function loop(time = 0){
+  if(last === 0) last = time; // 🔥 첫 프레임 델타 타임 튐 현상 방지
+
   if(!gameOver){
     if(waitingClear){
       effectTimer--;
@@ -512,9 +514,9 @@ function loop(time = 0){
       let dropInterval = Math.max(120, 500 - Math.floor(score / 800) * 35);
 
       if(t > dropInterval){ 
-        if(canMove(0, 1, piece.shape)){
+        if(piece && canMove(0, 1, piece.shape)){
           piece.y++;
-        } else {
+        } else if(piece) {
           merge();
         }
         t = 0; 
@@ -525,6 +527,7 @@ function loop(time = 0){
   requestAnimationFrame(loop);
 }
 
+// 🔥 초기화 후 루프 시작 순서 엄수
 reset();
 loop();
 </script>
