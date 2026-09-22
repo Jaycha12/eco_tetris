@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Final Tetris Tablet</title>
+
+<style>
+body{
+  margin:0;
+  background:black;
+  color:white;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  font-family:sans-serif;
+  touch-action:none;
+}
+
+#container{
+  display:flex;
+  flex-direction:row;
+  gap:20px;
+  align-items:center;
+}
+
+/* GAME */
+canvas{
+  background:black;
+  border:2px solid #333;
+}
+
+/* UI */
+#ui{
+  width:200px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+#panel{
+  border:1px solid #444;
+  padding:10px;
+  font-size:18px;
+}
+
+#hold, #next{
+  border:1px solid #555;
+  padding:10px;
+  text-align:center;
+  min-height:60px;
+}
+
+#controls{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:8px;
+}
+
+button{
+  padding:10px;
+  font-size:14px;
+  border-radius:6px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="container">
+
+<canvas id="game" width="300" height="600"></canvas>
+
+<div id="ui">
+
+  <div id="panel">
+    <div id="score">0</div>
+    <div id="best">BEST 0</div>
+  </div>
+
+  <div id="next">NEXT</div>
+  <div id="hold">HOLD</div>
+
+  <div id="controls">
+    <button onclick="moveLeft()">◀</button>
+    <button onclick="rotate()">↻</button>
+    <button onclick="moveRight()">▶</button>
+    <button onclick="moveDown()">▼</button>
+    <button onclick="hardDrop()">DROP</button>
+    <button onclick="hold()">HOLD</button>
+    <button onclick="reset()">RST</button>
+  </div>
+
+</div>
+
+</div>
+
+<script>
+
+const ROW=20, COL=10, SIZE=30;
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+let board,piece,nextPiece,holdPiece=null;
+let score=0,best=0;
+let lines=0,level=1;
+let combo=0;
+let gameOver=false;
+let holdUsed=false;
+
+/* SOUND */
+const audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+function beep(f,t=0.05){
+  const o=audioCtx.createOscillator();
+  const g=audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.frequency.value=f;
+  g.gain.value=0.1;
+  o.start();
+  o.stop(audioCtx.currentTime+t);
+}
+
+/* SHAPES */
+const SHAPES=[
+[[1,1,1,1]],
+[[1,1],[1,1]],
+[[0,1,0],[1,1,1]],
+[[1,0],[1,0],[1,1]]
+];
+
+function newPiece(){
+  return {
+    shape:SHAPES[Math.random()*SHAPES.length|0],
+    x:3,y:0
+  };
+}
+
+/* RESET */
+function reset(){
+  board=Array.from({length:ROW},()=>Array(COL).fill(0));
+  score=0; lines=0; level=1;
+  combo=0;
+  gameOver=false;
+
+  nextPiece=newPiece();
+  spawn();
+}
+
+/* SPAWN */
+function spawn(){
+  piece=nextPiece;
+  nextPiece=newPiece();
+
+  piece.x=3;
+  piece.y=0;
+
+  if(!canMove(0,0,piece.shape)){
+    gameOver=true;
+    if(score>best) best=score;
+  }
+
+  holdUsed=false;
+}
+
+/* COLLISION */
+function canMove(dx,dy,s=piece.shape){
+  for(let r=0;r<s.length;r++){
+    for(let c=0;c<s[r].length;c++){
+      if(s[r][c]){
+        let nx=piece.x+c+dx;
+        let ny=piece.y+r+dy;
+
+        if(nx<0||nx>=COL||ny>=ROW) return false;
+        if(board[ny]&&board[ny][nx]) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/* MERGE */
+function merge(){
+  for(let r=0;r<piece.shape.length;r++){
+    for(let c=0;c<piece.shape[r].length;c++){
+      if(piece.shape[r][c]){
+        board[piece.y+r][piece.x+c]=1;
+      }
+    }
+  }
+  clearLines();
+  spawn();
+}
+
+/* LINE + COMBO */
+function clearLines(){
+  let cleared=0;
+
+  for(let r=ROW-1;r>=0;r--){
+    if(board[r].every(v=>v)){
+      board.splice(r,1);
+      board.unshift(Array(COL).fill(0));
+      cleared++;
+      r++;
+    }
+  }
+
+  if(cleared){
+    combo++;
+
+    const table=[0,100,300,500,800];
+    score += table[cleared] + combo*50;
+
+    lines += cleared;
+    level = Math.floor(lines/10)+1;
+
+    beep(600);
+  } else {
+    combo=0;
+  }
+}
+
+/* GHOST */
+function getGhostY(){
+  let testY = piece.y;
+
+  while(true){
+    let ok=true;
+
+    for(let r=0;r<piece.shape.length;r++){
+      for(let c=0;c<piece.shape[r].length;c++){
+        if(piece.shape[r][c]){
+          let nx=piece.x+c;
+          let ny=testY+r+1;
+
+          if(ny>=ROW || (board[ny] && board[ny][nx])){
+            ok=false;
+          }
+        }
+      }
+    }
+
+    if(!ok) break;
+    testY++;
+  }
+
+  return testY;
+}
+
+/* DRAW NEXT */
+function drawNext(){
+  let x=230, y=40;
+
+  ctx.fillStyle="white";
+  ctx.font="14px sans-serif";
+  ctx.fillText("NEXT",x,y);
+
+  let s=nextPiece.shape;
+
+  for(let r=0;r<s.length;r++){
+    for(let c=0;c<s[r].length;c++){
+      if(s[r][c]){
+        ctx.fillRect(x+c*15,y+10+r*15,12,12);
+      }
+    }
+  }
+}
+
+/* DRAW */
+function draw(){
+  ctx.clearRect(0,0,300,600);
+
+  drawNext();
+
+  // ghost
+  let gy=getGhostY();
+
+  for(let r=0;r<piece.shape.length;r++){
+    for(let c=0;c<piece.shape[r].length;c++){
+      if(piece.shape[r][c]){
+        ctx.fillStyle="rgba(255,255,255,0.2)";
+        ctx.fillRect((piece.x+c)*SIZE,(gy+r)*SIZE,SIZE,SIZE);
+      }
+    }
+  }
+
+  // board
+  for(let r=0;r<ROW;r++){
+    for(let c=0;c<COL;c++){
+      if(board[r][c]){
+        ctx.fillStyle="white";
+        ctx.fillRect(c*SIZE,r*SIZE,SIZE,SIZE);
+      }
+    }
+  }
+
+  // piece
+  for(let r=0;r<piece.shape.length;r++){
+    for(let c=0;c<piece.shape[r].length;c++){
+      if(piece.shape[r][c]){
+        ctx.fillStyle="lime";
+        ctx.fillRect((piece.x+c)*SIZE,(piece.y+r)*SIZE,SIZE,SIZE);
+      }
+    }
+  }
+
+  document.getElementById("score").innerText=score;
+  document.getElementById("best").innerText="BEST "+best;
+}
+
+/* CONTROLS */
+function moveLeft(){ if(!gameOver&&canMove(-1,0)) piece.x--; }
+function moveRight(){ if(!gameOver&&canMove(1,0)) piece.x++; }
+function moveDown(){ if(gameOver)return; if(canMove(0,1)) piece.y++; else merge(); }
+function hardDrop(){ if(gameOver)return; while(canMove(0,1)) piece.y++; score+=2; merge(); }
+function rotate(){
+  let n=piece.shape[0].map((_,i)=>piece.shape.map(r=>r[i]).reverse());
+
+  // SRS-lite
+  if(canMove(0,0,n)) piece.shape=n;
+  else if(canMove(-1,0,n)) {piece.x--; piece.shape=n;}
+  else if(canMove(1,0,n)) {piece.x++; piece.shape=n;}
+}
+
+/* HOLD */
+function hold(){
+  if(gameOver||holdUsed)return;
+
+  if(!holdPiece){
+    holdPiece=piece;
+    spawn();
+  } else {
+    let t=piece;
+    piece=holdPiece;
+    holdPiece=t;
+    piece.x=3;
+    piece.y=0;
+  }
+
+  holdUsed=true;
+}
+
+/* LOOP */
+let last=0,t=0;
+function loop(time=0){
+  if(!gameOver){
+    let d=time-last;
+    last=time;
+    t+=d;
+
+    let speed=Math.max(100,500-level*40);
+
+    if(t>speed){
+      moveDown();
+      t=0;
+    }
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+
+</script>
+
+</body>
+</html>
