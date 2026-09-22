@@ -1,118 +1,26 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Tetris Ultimate SRS</title>
-
-<style>
-body{
-  margin:0; background:black; color:white;
-  display:flex; justify-content:center; align-items:center; height:100vh;
-  font-family:sans-serif; 
-  touch-action: none;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-  overflow: hidden;
-}
-#container{position:relative;display:flex;flex-direction:column;align-items:center;}
-#game{width:420px;height:840px;border:2px solid #555; touch-action: none;}
-#info{position:absolute;right:-220px;top:0;width:200px;display:flex;flex-direction:column;gap:10px;}
-.panel{border:1px solid #555;padding:10px;text-align:center;background:#111;font-weight:bold;}
-canvas.mini{background:black;margin-top:5px;display:block;margin-left:auto;margin-right:auto;}
-#controls{margin-top:15px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:420px;}
-button{
-  padding:14px; font-size:16px; font-weight:bold;
-  touch-action: manipulation;
-  -webkit-user-select: none;
-  user-select: none;
-  cursor: pointer;
-  background:#222; color:white; border:1px solid #777; border-radius:4px;
-}
-button:active{background:#444;}
-#gameOver{position:absolute;top:0;left:0;width:100%;height:100%;display:none;
-justify-content:center;align-items:center;flex-direction:column;background:rgba(0,0,0,0.88);}
-</style>
-</head>
-
-<body>
-
-<div id="container">
-
-<canvas id="game" width="300" height="600"></canvas>
-
-<div id="info">
-  <div class="panel" id="score">0</div>
-  <div class="panel" id="best">BEST 0</div>
-  <div class="panel" id="combo">COMBO 0</div>
-
-  <div class="panel">NEXT
-    <canvas id="nextCanvas" class="mini" width="80" height="80"></canvas>
-  </div>
-
-  <div class="panel">HOLD
-    <canvas id="holdCanvas" class="mini" width="80" height="80"></canvas>
-  </div>
-</div>
-
-<div id="controls">
-  <button id="btnLeft">◀</button>
-  <button id="btnRotate">↻</button>
-  <button id="btnRight">▶</button>
-  <button id="btnDown">▼</button>
-  <button id="btnDrop">DROP</button>
-  <button id="btnHold">HOLD</button>
-  <button id="btnReset">RST</button>
-</div>
-
-<div id="gameOver">
-  <div style="font-size:32px; margin-bottom:15px; color:#ff4444;">GAME OVER</div>
-  <div id="final" style="margin-bottom:20px; font-size:18px;"></div>
-  <button id="btnRestart" style="padding:12px 24px;">RESTART</button>
-</div>
-
-</div>
-
 <script>
-/* 확대 및 제스처 방지 */
-document.addEventListener("gesturestart", e => e.preventDefault());
-
-/* 사운드 (AudioContext) */
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function triggerAudioContext(){
-  if(audioCtx.state === "suspended") audioCtx.resume();
-}
-document.body.addEventListener("pointerdown", triggerAudioContext, {once: true});
-
-function beep(f, t=0.05){
-  try {
-    if(audioCtx.state !== "running") return;
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.value = f;
-    g.gain.value = 0.15;
-    o.start(); o.stop(audioCtx.currentTime + t);
-  } catch(e) {}
-}
-
-/* 기본 환경 설정 */
+/* ===================== BASIC ===================== */
 const ROW=20, COL=10, SIZE=30;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const nextCtx = document.getElementById("nextCanvas").getContext("2d");
-const holdCtx = document.getElementById("holdCanvas").getContext("2d");
+let board, piece, nextPiece, holdPiece=null;
+let score=0, combo=0, best=+localStorage.getItem("best")||0;
+let gameOver=false, holdUsed=false;
+let waitingClear=false;
 
-let board, piece, nextPiece, holdPiece = null;
-let score = 0, combo = 0, b2b = false;
-let best = Number(localStorage.getItem("best")) || 0;
-let gameOver = false, holdUsed = false;
+/* ===================== SPEED ===================== */
+let dropTimer=0;
+let dropBase=500;
 
-let clearRows = [], effectTimer = 0, waitingClear = false;
+/* DAS / ARR (핵심) */
+let dasDir=0;       // -1 left, +1 right
+let dasTime=0;
+let arrTime=0;
+let DAS_DELAY=140;
+let ARR_RATE=35;
 
-/* SHAPES */
+/* ===================== SHAPES ===================== */
 const SHAPES=[
 {type:'I', shape:[[1,1,1,1]], color:"cyan"},
 {type:'O', shape:[[1,1],[1,1]], color:"yellow"},
@@ -123,414 +31,239 @@ const SHAPES=[
 {type:'S', shape:[[0,1,1],[1,1,0]], color:"lime"}
 ];
 
-/* 7-bag 랜덤 시스템 */
+/* ===================== BAG ===================== */
 let bag=[];
 function refillBag(){
-  bag = SHAPES.slice();
-  for(let i = bag.length - 1; i > 0; i--){
-    let j = Math.random() * (i + 1) | 0;
-    [bag[i], bag[j]] = [bag[j], bag[i]];
+  bag=SHAPES.slice();
+  for(let i=bag.length-1;i>0;i--){
+    let j=(Math.random()*(i+1))|0;
+    [bag[i],bag[j]]=[bag[j],bag[i]];
   }
 }
 function getNext(){
-  if(bag.length === 0) refillBag();
+  if(!bag.length) refillBag();
   return bag.pop();
 }
 
-/* 깊은 복사 */
-function clonePiece(p){
+/* ===================== PIECE ===================== */
+function clone(p){
   return {
-    type: p.type,
-    shape: p.shape.map(r => [...r]),
-    color: p.color,
-    x: Math.floor(COL / 2) - Math.floor(p.shape[0].length / 2),
-    y: 0, 
-    rot: 0
+    type:p.type,
+    shape:p.shape.map(r=>[...r]),
+    color:p.color,
+    x:Math.floor(COL/2)-Math.floor(p.shape[0].length/2),
+    y:0
   };
 }
 
-function newPiece(){
-  return clonePiece(getNext());
-}
-
-/* RESET */
-function reset(){
-  board = Array.from({length: ROW}, () => Array(COL).fill(null));
-  score = 0; combo = 0; b2b = false;
-  gameOver = false;
-  waitingClear = false;
-  effectTimer = 0;
-  holdPiece = null;
-  holdUsed = false;
-  refillBag();
-  nextPiece = newPiece();
-  spawn();
-  document.getElementById("gameOver").style.display = "none";
-}
-
-/* SPAWN */
-function spawn(){
-  piece = clonePiece(nextPiece);
-  nextPiece = newPiece();
-
-  if(!canMove(0, 0, piece.shape)){
-    gameOver = true;
-    beep(150, 0.3);
-    if(score > best){
-      best = score;
-      localStorage.setItem("best", best);
-    }
-    showGameOver();
-  }
-  holdUsed = false;
-}
-
-/* MOVE & 충돌 판정 */
-function canMove(dx, dy, s){
-  for(let r = 0; r < s.length; r++){
-    for(let c = 0; c < s[r].length; c++){
-      if(s[r][c]){
-        let nx = piece.x + c + dx;
-        let ny = piece.y + r + dy;
-        if(nx < 0 || nx >= COL || ny >= ROW) return false;
-        if(ny >= 0 && board[ny] && board[ny][nx]) return false;
+/* ===================== CRITICAL FIX ===================== */
+/* 👉 canMove 버그 수정 (원래 코드는 piece 고정 참조였음) */
+function canMove(px,py,shape,x,y){
+  for(let r=0;r<shape.length;r++){
+    for(let c=0;c<shape[r].length;c++){
+      if(shape[r][c]){
+        let nx=x+c+px;
+        let ny=y+r+py;
+        if(nx<0||nx>=COL||ny>=ROW) return false;
+        if(ny>=0 && board[ny][nx]) return false;
       }
     }
   }
   return true;
 }
 
-/* GHOST */
-function getGhostY(){
-  let y = piece.y;
-  while(canMove(0, y - piece.y + 1, piece.shape)) y++;
-  return y;
+/* ===================== SPAWN ===================== */
+function spawn(){
+  piece=clone(nextPiece);
+  nextPiece=clone(getNext());
+  if(!canMove(0,0,piece.shape,piece.x,piece.y)){
+    gameOver=true;
+    return;
+  }
+  holdUsed=false;
 }
 
-/* SRS 킥 데이터 */
-const kicks = {
-  normal:[
-    [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
-    [[0,0],[1,0],[1,-1],[0,2],[1,2]]
-  ],
-  I:[
-    [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
-    [[0,0],[2,0],[-1,0],[2,1],[-1,-2]]
-  ]
-};
-
-/* 회전 시스템 */
-let lastRotate = false;
-function rotate(){
-  if(gameOver || waitingClear) return;
-  let old = piece.shape;
-  let newShape = old[0].map((_, i) => old.map(r => r[i]).reverse());
-
-  let testKicks = piece.type === 'I' ? kicks.I : kicks.normal;
-
-  for(let i = 0; i < testKicks.length; i++){
-    for(let [dx, dy] of testKicks[i]){
-      if(canMove(dx, dy, newShape)){
-        piece.shape = newShape;
-        piece.x += dx;
-        piece.y += dy;
-        lastRotate = true;
-        beep(440);
-        return;
-      }
-    }
-  }
-  lastRotate = false;
-}
-
-/* T-SPIN 판정 */
-function isTSpin(){
-  if(piece.type !== 'T' || !lastRotate) return false;
-
-  let cx = piece.x + 1;
-  let cy = piece.y + 1;
-
-  let corners = [
-    [cx-1, cy-1], [cx+1, cy-1],
-    [cx-1, cy+1], [cx+1, cy+1]
-  ];
-
-  let count = 0;
-  corners.forEach(([x, y]) => {
-    if(x < 0 || x >= COL || y >= ROW || (y >= 0 && board[y] && board[y][x])) count++;
-  });
-
-  return count >= 3;
-}
-
-/* LINE CLEAR */
-function checkLines(){
-  clearRows = [];
-  for(let r = 0; r < ROW; r++){
-    if(board[r].every(v => v !== null)) clearRows.push(r);
-  }
-  if(clearRows.length){
-    effectTimer = 12;
-    waitingClear = true;
-    beep(600, 0.1);
-  }
-  return clearRows.length;
-}
-
-/* MERGE & 점수 시스템 */
-function merge(){
-  for(let r = 0; r < piece.shape.length; r++){
-    for(let c = 0; c < piece.shape[r].length; c++){
-      if(piece.shape[r][c]){
-        let currentY = piece.y + r;
-        if(currentY < 0){
-          gameOver = true;
-          showGameOver();
-          return;
-        }
-        board[currentY][piece.x + c] = piece.color;
-      }
-    }
-  }
-
-  let tspin = isTSpin();
-  let cleared = checkLines();
-
-  if(cleared){
-    combo++;
-    let base = [0, 100, 300, 500, 800][cleared] || 800;
-
-    if(tspin){
-      base *= 2;
-      if(b2b) base = Math.floor(base * 1.5);
-      b2b = true;
-    } else {
-      if(cleared === 4){
-        if(b2b) base = Math.floor(base * 1.5);
-        b2b = true;
-      } else {
-        b2b = false;
-      }
-    }
-
-    score += base + (combo - 1) * 50;
-  } else {
-    combo = 0;
-    b2b = false;
-  }
-
-  lastRotate = false;
-
-  if(!waitingClear){
-    spawn();
-  }
-}
-
-/* APPLY CLEAR */
-function applyClear(){
-  clearRows.sort((a, b) => a - b);
-  clearRows.forEach(r => {
-    board.splice(r, 1);
-    board.unshift(Array(COL).fill(null));
-  });
-  waitingClear = false;
+/* ===================== RESET ===================== */
+function reset(){
+  board=Array.from({length:ROW},()=>Array(COL).fill(null));
+  score=0; combo=0;
+  gameOver=false; holdPiece=null;
+  refillBag();
+  nextPiece=clone(getNext());
   spawn();
 }
 
-/* DRAW */
-function draw(){
-  ctx.clearRect(0, 0, 300, 600);
-
-  // 선명한 격자 표시
-  ctx.strokeStyle = "#3A3A3A";
-  ctx.lineWidth = 1;
-  for(let x = 0; x <= COL; x++){
-    ctx.beginPath(); ctx.moveTo(x * SIZE, 0); ctx.lineTo(x * SIZE, 600); ctx.stroke();
+/* ===================== MOVE ===================== */
+function move(dx,dy){
+  if(canMove(dx,dy,piece.shape,piece.x,piece.y)){
+    piece.x+=dx;
+    piece.y+=dy;
+    return true;
   }
-  for(let y = 0; y <= ROW; y++){
-    ctx.beginPath(); ctx.moveTo(0, y * SIZE); ctx.lineTo(300, y * SIZE); ctx.stroke();
-  }
-
-  // Board 그리기
-  for(let r = 0; r < ROW; r++){
-    for(let c = 0; c < COL; c++){
-      if(board[r][c]){
-        ctx.fillStyle = board[r][c];
-        ctx.fillRect(c * SIZE, r * SIZE, SIZE, SIZE);
-        ctx.strokeStyle = "#111";
-        ctx.strokeRect(c * SIZE, r * SIZE, SIZE, SIZE);
-      }
-    }
-  }
-
-  // 라인 삭제 시 흰색 깜빡 효과
-  if(effectTimer > 0 && Math.floor(effectTimer / 2) % 2 === 0){
-    ctx.fillStyle = "white";
-    clearRows.forEach(r => {
-      ctx.fillRect(0, r * SIZE, COL * SIZE, SIZE);
-    });
-  }
-
-  // 고스트 표시
-  if(!waitingClear && !gameOver && piece){
-    let gy = getGhostY();
-    ctx.globalAlpha = 0.3;
-    ctx.fillStyle = piece.color;
-    for(let r = 0; r < piece.shape.length; r++){
-      for(let c = 0; c < piece.shape[r].length; c++){
-        if(piece.shape[r][c]){
-          ctx.fillRect((piece.x + c) * SIZE, (gy + r) * SIZE, SIZE, SIZE);
-        }
-      }
-    }
-    ctx.globalAlpha = 1;
-
-    // 현재 조작 중인 피스
-    ctx.fillStyle = piece.color;
-    for(let r = 0; r < piece.shape.length; r++){
-      for(let c = 0; c < piece.shape[r].length; c++){
-        if(piece.shape[r][c]){
-          ctx.fillRect((piece.x + c) * SIZE, (piece.y + r) * SIZE, SIZE, SIZE);
-          ctx.strokeStyle = "#000";
-          ctx.strokeRect((piece.x + c) * SIZE, (piece.y + r) * SIZE, SIZE, SIZE);
-        }
-      }
-    }
-  }
-
-  document.getElementById("score").innerText = score;
-  document.getElementById("best").innerText = "BEST " + best;
-  document.getElementById("combo").innerText = "COMBO " + combo;
-
-  drawMini(nextCtx, nextPiece);
-  drawMini(holdCtx, holdPiece);
+  return false;
 }
 
-function drawMini(targetCtx, p){
-  targetCtx.clearRect(0, 0, 80, 80);
-  if(!p) return;
-  
-  let size = 16;
-  let rows = p.shape.length;
-  let cols = p.shape[0].length;
-  
-  let offsetX = (80 - cols * size) / 2;
-  let offsetY = (80 - rows * size) / 2;
-
-  targetCtx.fillStyle = p.color;
-  for(let r = 0; r < rows; r++){
-    for(let c = 0; c < cols; c++){
-      if(p.shape[r][c]){
-        targetCtx.fillRect(offsetX + c * size, offsetY + r * size, size - 1, size - 1);
-      }
-    }
-  }
-}
-
-/* UI / GAME OVER */
-function showGameOver(){
-  document.getElementById("gameOver").style.display = "flex";
-  document.getElementById("final").innerText = "Score: " + score + " / Best: " + best;
-}
-
-/* CONTROLS */
-function moveLeft(){ 
-  if(gameOver || waitingClear || !piece) return; 
-  if(canMove(-1, 0, piece.shape)){ piece.x--; beep(300); } 
-}
-function moveRight(){ 
-  if(gameOver || waitingClear || !piece) return; 
-  if(canMove(1, 0, piece.shape)){ piece.x++; beep(300); } 
-}
-function moveDown(){ 
-  if(gameOver || waitingClear || !piece) return; 
-  if(canMove(0, 1, piece.shape)){ 
-    piece.y++; 
-    score += 1; 
-  } else { 
-    merge(); 
-  } 
-}
+/* ===================== HARD DROP ===================== */
 function hardDrop(){
-  if(gameOver || waitingClear || !piece) return;
-  let d = 0;
-  while(canMove(0, 1, piece.shape)){ 
-    piece.y++; 
-    d++; 
-  }
-  score += d * 2; 
-  beep(500, 0.08);
-  merge();
+  let d=0;
+  while(move(0,1)) d++;
+  score+=d*2;
+  lock();
 }
+
+/* ===================== LOCK ===================== */
+function lock(){
+  for(let r=0;r<piece.shape.length;r++){
+    for(let c=0;c<piece.shape[r].length;c++){
+      if(piece.shape[r][c]){
+        board[piece.y+r][piece.x+c]=piece.color;
+      }
+    }
+  }
+  clearLines();
+  spawn();
+}
+
+/* ===================== CLEAR ===================== */
+function clearLines(){
+  let cleared=0;
+  for(let r=ROW-1;r>=0;r--){
+    if(board[r].every(v=>v)){
+      board.splice(r,1);
+      board.unshift(Array(COL).fill(null));
+      cleared++;
+      r++;
+    }
+  }
+  if(cleared){
+    score+=cleared*200;
+    combo++;
+  }else combo=0;
+}
+
+/* ===================== ROTATE (simple SRS-lite) ===================== */
+function rotate(){
+  let s=piece.shape;
+  let ns=s[0].map((_,i)=>s.map(r=>r[i]).reverse());
+
+  if(canMove(0,0,ns,piece.x,piece.y)){
+    piece.shape=ns;
+  }
+}
+
+/* ===================== HOLD ===================== */
 function hold(){
-  if(gameOver || waitingClear || holdUsed || !piece) return;
-  beep(350);
+  if(holdUsed) return;
 
   if(!holdPiece){
-    holdPiece = clonePiece(piece);
+    holdPiece=clone(piece);
     spawn();
-  } else {
-    let temp = clonePiece(piece);
-    piece = clonePiece(holdPiece);
-    holdPiece = clonePiece(temp);
-    piece.x = Math.floor(COL / 2) - Math.floor(piece.shape[0].length / 2);
-    piece.y = 0;
+  }else{
+    let t=clone(piece);
+    piece=clone(holdPiece);
+    holdPiece=t;
   }
-  holdUsed = true;
+  holdUsed=true;
 }
 
-/* 터치 버튼 바인딩 */
-function bindTouch(id, action){
-  const el = document.getElementById(id);
-  el.addEventListener("pointerdown", (e) => {
+/* ===================== DAS SYSTEM ===================== */
+function dasUpdate(dt){
+  if(dasDir===0) return;
+
+  dasTime+=dt;
+
+  if(dasTime>DAS_DELAY){
+    arrTime+=dt;
+    if(arrTime>ARR_RATE){
+      move(dasDir,0);
+      arrTime=0;
+    }
+  }
+}
+
+/* ===================== INPUT ===================== */
+function bind(id,fn,dir=0){
+  let el=document.getElementById(id);
+
+  el.addEventListener("pointerdown",e=>{
     e.preventDefault();
-    action();
+    fn();
+
+    if(dir!==0){
+      dasDir=dir;
+      dasTime=0;
+      arrTime=0;
+    }
+  });
+
+  el.addEventListener("pointerup",()=>{
+    if(dir!==0) dasDir=0;
   });
 }
 
-bindTouch("btnLeft", moveLeft);
-bindTouch("btnRotate", rotate);
-bindTouch("btnRight", moveRight);
-bindTouch("btnDown", moveDown);
-bindTouch("btnDrop", hardDrop);
-bindTouch("btnHold", hold);
-bindTouch("btnReset", reset);
-bindTouch("btnRestart", reset);
+bind("btnLeft",()=>move(-1,0),-1);
+bind("btnRight",()=>move(1,0),1);
+bind("btnRotate",rotate);
+bind("btnDown",()=>move(0,1));
+bind("btnDrop",hardDrop);
+bind("btnHold",hold);
+bind("btnReset",reset);
+bind("btnRestart",reset);
 
-/* GAME LOOP (last 초기화 버그 방지 반영) */
-let last = 0, t = 0;
-function loop(time = 0){
-  if(last === 0) last = time; // 🔥 첫 프레임 델타 타임 튐 현상 방지
+/* ===================== LOOP ===================== */
+let last=0;
+
+function loop(t=0){
+  if(!last) last=t;
+  let dt=t-last;
+  last=t;
 
   if(!gameOver){
-    if(waitingClear){
-      effectTimer--;
-      if(effectTimer <= 0) applyClear();
-    } else {
-      let d = time - last; 
-      last = time; 
-      t += d;
-      
-      let dropInterval = Math.max(120, 500 - Math.floor(score / 800) * 35);
+    dasUpdate(dt);
 
-      if(t > dropInterval){ 
-        if(piece && canMove(0, 1, piece.shape)){
-          piece.y++;
-        } else if(piece) {
-          merge();
-        }
-        t = 0; 
-      }
+    dropTimer+=dt;
+
+    let speed = Math.max(60, dropBase - score*0.5);
+
+    if(dropTimer>speed){
+      if(!move(0,1)) lock();
+      dropTimer=0;
     }
   }
+
   draw();
   requestAnimationFrame(loop);
 }
 
-// 🔥 초기화 후 루프 시작 순서 엄수
-reset();
-loop();
-</script>
+/* ===================== DRAW ===================== */
+function draw(){
+  ctx.clearRect(0,0,300,600);
 
-</body>
-</html>
+  for(let r=0;r<ROW;r++){
+    for(let c=0;c<COL;c++){
+      if(board[r][c]){
+        ctx.fillStyle=board[r][c];
+        ctx.fillRect(c*SIZE,r*SIZE,SIZE,SIZE);
+      }
+    }
+  }
+
+  if(piece){
+    ctx.fillStyle=piece.color;
+    for(let r=0;r<piece.shape.length;r++){
+      for(let c=0;c<piece.shape[r].length;c++){
+        if(piece.shape[r][c]){
+          ctx.fillRect((piece.x+c)*SIZE,(piece.y+r)*SIZE,SIZE,SIZE);
+        }
+      }
+    }
+  }
+
+  document.getElementById("score").innerText=score;
+  document.getElementById("best").innerText="BEST "+best;
+}
+
+/* ===================== START ===================== */
+reset();
+requestAnimationFrame(loop);
+</script>
