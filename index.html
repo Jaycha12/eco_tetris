@@ -75,7 +75,7 @@ justify-content:center;align-items:center;flex-direction:column;background:rgba(
 </div>
 
 <script>
-/* 확대 및 제스처 방지 보완 */
+/* 확대 및 제스처 방지 */
 document.addEventListener("gesturestart", e => e.preventDefault());
 
 /* 사운드 (AudioContext) */
@@ -137,13 +137,15 @@ function getNext(){
   return bag.pop();
 }
 
-/* 깊은 복사 (참조 버그 제거) */
+/* 깊은 복사 */
 function clonePiece(p){
   return {
     type: p.type,
     shape: p.shape.map(r => [...r]),
     color: p.color,
-    x: 3, y: 0, rot: 0
+    x: Math.floor(COL / 2) - Math.floor(p.shape[0].length / 2),
+    y: 0, 
+    rot: 0
   };
 }
 
@@ -171,7 +173,7 @@ function spawn(){
   piece = clonePiece(nextPiece);
   nextPiece = newPiece();
 
-  if(!canMove(0, 0)){
+  if(!canMove(0, 0, piece.shape)){
     gameOver = true;
     beep(150, 0.3);
     if(score > best){
@@ -184,7 +186,7 @@ function spawn(){
 }
 
 /* MOVE & 충돌 판정 */
-function canMove(dx, dy, s = piece.shape){
+function canMove(dx, dy, s){
   for(let r = 0; r < s.length; r++){
     for(let c = 0; c < s[r].length; c++){
       if(s[r][c]){
@@ -201,7 +203,7 @@ function canMove(dx, dy, s = piece.shape){
 /* GHOST */
 function getGhostY(){
   let y = piece.y;
-  while(canMove(0, y - piece.y + 1)) y++;
+  while(canMove(0, y - piece.y + 1, piece.shape)) y++;
   return y;
 }
 
@@ -217,7 +219,7 @@ const kicks = {
   ]
 };
 
-/* 회전 시스템 (SRS 벽킥 포함) */
+/* 회전 시스템 */
 let lastRotate = false;
 function rotate(){
   if(gameOver || waitingClear) return;
@@ -241,7 +243,7 @@ function rotate(){
   lastRotate = false;
 }
 
-/* T-SPIN 판정 (코너 3개 + 회전 기반) */
+/* T-SPIN 판정 */
 function isTSpin(){
   if(piece.type !== 'T' || !lastRotate) return false;
 
@@ -280,12 +282,13 @@ function merge(){
   for(let r = 0; r < piece.shape.length; r++){
     for(let c = 0; c < piece.shape[r].length; c++){
       if(piece.shape[r][c]){
-        if(piece.y + r < 0){
+        let currentY = piece.y + r;
+        if(currentY < 0){
           gameOver = true;
           showGameOver();
           return;
         }
-        board[piece.y + r][piece.x + c] = piece.color;
+        board[currentY][piece.x + c] = piece.color;
       }
     }
   }
@@ -334,11 +337,11 @@ function applyClear(){
   spawn();
 }
 
-/* DRAW (선명한 격자 및 시각 효과) */
+/* DRAW */
 function draw(){
   ctx.clearRect(0, 0, 300, 600);
 
-  // 선명한 격자 표시 (#3A3A3A)
+  // 선명한 격자 표시
   ctx.strokeStyle = "#3A3A3A";
   ctx.lineWidth = 1;
   for(let x = 0; x <= COL; x++){
@@ -368,7 +371,7 @@ function draw(){
     });
   }
 
-  // 고스트(Ghost) 반투명 표시
+  // 고스트 표시
   if(!waitingClear && !gameOver){
     let gy = getGhostY();
     ctx.globalAlpha = 0.3;
@@ -395,7 +398,6 @@ function draw(){
     }
   }
 
-  // UI 텍스트 갱신
   document.getElementById("score").innerText = score;
   document.getElementById("best").innerText = "BEST " + best;
   document.getElementById("combo").innerText = "COMBO " + combo;
@@ -404,7 +406,6 @@ function draw(){
   drawMini(holdCtx, holdPiece);
 }
 
-/* 넥스트/홀드 미니 캔버스 렌더링 수정 (정중앙 정렬 보장) */
 function drawMini(targetCtx, p){
   targetCtx.clearRect(0, 0, 80, 80);
   if(!p) return;
@@ -432,20 +433,20 @@ function showGameOver(){
   document.getElementById("final").innerText = "Score: " + score + " / Best: " + best;
 }
 
-/* CONTROLS (effect 중 입력 차단 적용) */
+/* CONTROLS */
 function moveLeft(){ 
   if(gameOver || waitingClear) return; 
-  if(canMove(-1, 0)){ piece.x--; beep(300); } 
+  if(canMove(-1, 0, piece.shape)){ piece.x--; beep(300); } 
 }
 function moveRight(){ 
   if(gameOver || waitingClear) return; 
-  if(canMove(1, 0)){ piece.x++; beep(300); } 
+  if(canMove(1, 0, piece.shape)){ piece.x++; beep(300); } 
 }
 function moveDown(){ 
   if(gameOver || waitingClear) return; 
-  if(canMove(0, 1)){ 
+  if(canMove(0, 1, piece.shape)){ 
     piece.y++; 
-    score += 1; // 소프트드롭 점수
+    score += 1; 
   } else { 
     merge(); 
   } 
@@ -453,11 +454,11 @@ function moveDown(){
 function hardDrop(){
   if(gameOver || waitingClear) return;
   let d = 0;
-  while(canMove(0, 1)){ 
+  while(canMove(0, 1, piece.shape)){ 
     piece.y++; 
     d++; 
   }
-  score += d * 2; // 하드드롭 거리 비례 점수
+  score += d * 2; 
   beep(500, 0.08);
   merge();
 }
@@ -472,11 +473,13 @@ function hold(){
     let temp = clonePiece(piece);
     piece = clonePiece(holdPiece);
     holdPiece = clonePiece(temp);
+    piece.x = Math.floor(COL / 2) - Math.floor(piece.shape[0].length / 2);
+    piece.y = 0;
   }
   holdUsed = true;
 }
 
-/* 터치 버튼 바인딩 (모바일/태블릿 최적화) */
+/* 터치 버튼 바인딩 */
 function bindTouch(id, action){
   const el = document.getElementById(id);
   el.addEventListener("pointerdown", (e) => {
@@ -494,7 +497,7 @@ bindTouch("btnHold", hold);
 bindTouch("btnReset", reset);
 bindTouch("btnRestart", reset);
 
-/* GAME LOOP (점점 빨라지는 난이도 시스템) */
+/* GAME LOOP */
 let last = 0, t = 0;
 function loop(time = 0){
   if(!gameOver){
@@ -509,7 +512,7 @@ function loop(time = 0){
       let dropInterval = Math.max(120, 500 - Math.floor(score / 800) * 35);
 
       if(t > dropInterval){ 
-        if(canMove(0, 1)){
+        if(canMove(0, 1, piece.shape)){
           piece.y++;
         } else {
           merge();
